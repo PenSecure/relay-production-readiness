@@ -1,0 +1,11 @@
+# Accepted findings. Each one needs a reason and an owner. Review quarterly.
+
+# Public ALB: it is the product's public endpoint. Fronted by WAF + TLS 1.3.
+AVD-AWS-0053
+
+# Node egress 0.0.0.0/0: nodes reach ECR/STS/the managed DB through NAT.
+# Owner: platform. Tighten to the DB SG + VPC interface endpoints once known.
+AVD-AWS-0104
+
+# ALB access-log bucket uses SSE-S3: ALB log delivery does not support SSE-KMS.
+AVD-AWS-0132

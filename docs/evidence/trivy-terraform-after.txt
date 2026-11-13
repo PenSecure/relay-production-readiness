@@ -1,0 +1,96 @@
+
+Report Summary
+
+┌─────────────┬───────────┬───────────────────┐
+│   Target    │   Type    │ Misconfigurations │
+├─────────────┼───────────┼───────────────────┤
+│ .           │ terraform │         0         │
+├─────────────┼───────────┼───────────────────┤
+│ alb.tf      │ terraform │         1         │
+├─────────────┼───────────┼───────────────────┤
+│ eks.tf      │ terraform │         0         │
+├─────────────┼───────────┼───────────────────┤
+│ security.tf │ terraform │         1         │
+├─────────────┼───────────┼───────────────────┤
+│ storage.tf  │ terraform │         1         │
+└─────────────┴───────────┴───────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+alb.tf (terraform)
+==================
+Tests: 1 (SUCCESSES: 0, FAILURES: 1)
+Failures: 1 (HIGH: 1, CRITICAL: 0)
+
+AWS-0053 (HIGH): Load balancer is exposed publicly.
+════════════════════════════════════════
+There are many scenarios in which you would want to expose a load balancer to the wider internet, but this check exists as a warning to prevent accidental exposure of internal assets. You should ensure that this resource should be exposed publicly.
+
+
+See https://avd.aquasec.com/misconfig/aws-0053
+────────────────────────────────────────
+ alb.tf:3
+   via alb.tf:1-15 (aws_lb.this)
+────────────────────────────────────────
+   1   resource "aws_lb" "this" {
+   .   
+   3 [   internal                   = false
+  ..   
+  15   }
+────────────────────────────────────────
+
+
+
+security.tf (terraform)
+=======================
+Tests: 1 (SUCCESSES: 0, FAILURES: 1)
+Failures: 1 (HIGH: 0, CRITICAL: 1)
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:67
+   via security.tf:64-69 (aws_vpc_security_group_egress_rule.nodes_out)
+────────────────────────────────────────
+  64   resource "aws_vpc_security_group_egress_rule" "nodes_out" {
+  65     security_group_id = aws_security_group.nodes.id
+  66     description       = "Outbound via NAT / VPC endpoints"
+  67 [   cidr_ipv4         = "0.0.0.0/0"
+  68     ip_protocol       = "-1"
+  69   }
+────────────────────────────────────────
+
+
+
+storage.tf (terraform)
+======================
+Tests: 1 (SUCCESSES: 0, FAILURES: 1)
+Failures: 1 (HIGH: 1, CRITICAL: 0)
+
+AWS-0132 (HIGH): Bucket does not encrypt data with a customer managed key.
+════════════════════════════════════════
+Encryption using AWS keys provides protection for your S3 buckets. To gain greater control over encryption, such as key rotation, access policies, and auditability, use customer managed keys (CMKs) with SSE-KMS.
+Note that SSE-KMS is not supported for S3 server access logging destination buckets; in such cases, use SSE-S3 instead.
+
+
+See https://avd.aquasec.com/misconfig/aws-0132
+────────────────────────────────────────
+ storage.tf:96-103
+────────────────────────────────────────
+  96 ┌ resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  97 │   bucket = aws_s3_bucket.alb_logs.id
+  98 │   rule {
+  99 │     apply_server_side_encryption_by_default {
+ 100 │       sse_algorithm = "AES256"
+ 101 │     }
+ 102 │   }
+ 103 └ }
+────────────────────────────────────────
+
+

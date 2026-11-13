@@ -6,10 +6,19 @@ output "cluster_endpoint" {
   value = aws_eks_cluster.this.endpoint
 }
 
-output "bastion_public_ip" {
-  value = aws_instance.bastion.public_ip
-}
-
 output "archive_bucket" {
   value = aws_s3_bucket.archive.bucket
+}
+
+output "app_role_arn" {
+  description = "Annotate the relay ServiceAccount with this (k8s/prod)"
+  value       = aws_iam_role.app.arn
+}
+
+output "secret_arns" {
+  description = "Grant the External Secrets role read access to these"
+  value = {
+    database_url   = aws_secretsmanager_secret.database_url.arn
+    signing_secret = aws_secretsmanager_secret.signing_secret.arn
+  }
 }

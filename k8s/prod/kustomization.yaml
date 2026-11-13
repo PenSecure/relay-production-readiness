@@ -26,8 +26,9 @@ patches:
           eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/relay-prod-app
   - target: { kind: Deployment, name: relay }
     patch: |-
-      # IRSA projects a web identity token into the pod. That uses a
-      # dedicated projected volume, not the Kubernetes API token.
+      # The IRSA webhook injects its own projected web-identity token.
+      # Kept true until verified on the target EKS version, then flip
+      # back to false (base default) to drop the API token too.
       - op: replace
         path: /spec/template/spec/automountServiceAccountToken
         value: true
@@ -35,4 +36,4 @@ patches:
     patch: |-
       - op: add
         path: /data/ARCHIVE_BUCKET
-        value: relay-prod-event-archive
+        value: relay-prod-event-archive-123456789012 # terraform output archive_bucket

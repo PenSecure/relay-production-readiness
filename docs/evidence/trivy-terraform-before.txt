@@ -1,0 +1,472 @@
+
+Report Summary
+
+┌─────────────┬───────────┬───────────────────┐
+│   Target    │   Type    │ Misconfigurations │
+├─────────────┼───────────┼───────────────────┤
+│ .           │ terraform │         0         │
+├─────────────┼───────────┼───────────────────┤
+│ alb.tf      │ terraform │         3         │
+├─────────────┼───────────┼───────────────────┤
+│ app.tf      │ terraform │         7         │
+├─────────────┼───────────┼───────────────────┤
+│ eks.tf      │ terraform │         5         │
+├─────────────┼───────────┼───────────────────┤
+│ network.tf  │ terraform │         2         │
+├─────────────┼───────────┼───────────────────┤
+│ security.tf │ terraform │         5         │
+└─────────────┴───────────┴───────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+alb.tf (terraform)
+==================
+Tests: 3 (SUCCESSES: 0, FAILURES: 3)
+Failures: 3 (HIGH: 2, CRITICAL: 1)
+
+AWS-0052 (HIGH): Application load balancer is not set to drop invalid headers.
+════════════════════════════════════════
+Passing unknown or invalid headers through to the target poses a potential risk of compromise.
+By setting drop_invalid_header_fields to true, anything that does not conform to well known, defined headers will be removed by the load balancer.
+
+
+See https://avd.aquasec.com/misconfig/aws-0052
+────────────────────────────────────────
+ alb.tf:1-7
+────────────────────────────────────────
+   1 ┌ resource "aws_lb" "this" {
+   2 │   name               = var.name
+   3 │   internal           = false
+   4 │   load_balancer_type = "application"
+   5 │   security_groups    = [aws_security_group.alb.id]
+   6 │   subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+   7 └ }
+────────────────────────────────────────
+
+
+AWS-0053 (HIGH): Load balancer is exposed publicly.
+════════════════════════════════════════
+There are many scenarios in which you would want to expose a load balancer to the wider internet, but this check exists as a warning to prevent accidental exposure of internal assets. You should ensure that this resource should be exposed publicly.
+
+
+See https://avd.aquasec.com/misconfig/aws-0053
+────────────────────────────────────────
+ alb.tf:3
+   via alb.tf:1-7 (aws_lb.this)
+────────────────────────────────────────
+   1   resource "aws_lb" "this" {
+   2     name               = var.name
+   3 [   internal           = false
+   4     load_balancer_type = "application"
+   5     security_groups    = [aws_security_group.alb.id]
+   6     subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+   7   }
+────────────────────────────────────────
+
+
+AWS-0054 (CRITICAL): Listener for application load balancer does not use HTTPS.
+════════════════════════════════════════
+Plain HTTP is unencrypted and human-readable. This means that if a malicious actor was to eavesdrop on your connection, they would be able to see all of your data flowing back and forth.
+You should use HTTPS, which is HTTP over an encrypted (TLS) connection, meaning eavesdroppers cannot read your traffic.
+
+
+See https://avd.aquasec.com/misconfig/aws-0054
+────────────────────────────────────────
+ alb.tf:24-33
+────────────────────────────────────────
+  24 ┌ resource "aws_lb_listener" "http" {
+  25 │   load_balancer_arn = aws_lb.this.arn
+  26 │   port              = 80
+  27 │   protocol          = "HTTP"
+  28 │ 
+  29 │   default_action {
+  30 │     type             = "forward"
+  31 │     target_group_arn = aws_lb_target_group.relay.arn
+  32 │   }
+  33 └ }
+────────────────────────────────────────
+
+
+
+app.tf (terraform)
+==================
+Tests: 7 (SUCCESSES: 0, FAILURES: 7)
+Failures: 7 (HIGH: 7, CRITICAL: 0)
+
+AWS-0028 (HIGH): Instance does not require IMDS access to require a token.
+════════════════════════════════════════
+IMDS v2 (Instance Metadata Service) introduced session authentication tokens which improve security when talking to IMDS.
+
+By default <code>aws_instance</code> resource sets IMDS session auth tokens to be optional.
+
+To fully protect IMDS you need to enable session tokens by using <code>metadata_options</code> block and its <code>http_tokens</code> variable set to <code>required</code>.
+
+
+See https://avd.aquasec.com/misconfig/aws-0028
+────────────────────────────────────────
+ app.tf:16-23
+────────────────────────────────────────
+  16 ┌ resource "aws_instance" "bastion" {
+  17 │   ami                         = "ami-0c55b159cbfafe1f0"
+  18 │   instance_type               = "t3.micro"
+  19 │   subnet_id                   = aws_subnet.public_a.id
+  20 │   key_name                    = var.ssh_key_name
+  21 │   vpc_security_group_ids      = [aws_security_group.bastion.id]
+  22 │   associate_public_ip_address = true
+  23 └ }
+────────────────────────────────────────
+
+
+AWS-0086 (HIGH): No public access block so not blocking public acls
+════════════════════════════════════════
+S3 buckets should block public ACLs on buckets and any objects they contain. By blocking, PUTs with fail if the object has any public ACL a.
+
+
+See https://avd.aquasec.com/misconfig/aws-0086
+────────────────────────────────────────
+ app.tf:1-3
+────────────────────────────────────────
+   1 ┌ resource "aws_s3_bucket" "archive" {
+   2 │   bucket = "${var.name}-event-archive"
+   3 └ }
+────────────────────────────────────────
+
+
+AWS-0087 (HIGH): No public access block so not blocking public policies
+════════════════════════════════════════
+S3 bucket policy should have block public policy to prevent users from putting a policy that enable public access.
+
+
+See https://avd.aquasec.com/misconfig/aws-0087
+────────────────────────────────────────
+ app.tf:1-3
+────────────────────────────────────────
+   1 ┌ resource "aws_s3_bucket" "archive" {
+   2 │   bucket = "${var.name}-event-archive"
+   3 └ }
+────────────────────────────────────────
+
+
+AWS-0091 (HIGH): No public access block so not blocking public acls
+════════════════════════════════════════
+S3 buckets should ignore public ACLs on buckets and any objects they contain. By ignoring rather than blocking, PUT calls with public ACLs will still be applied but the ACL will be ignored.
+
+
+See https://avd.aquasec.com/misconfig/aws-0091
+────────────────────────────────────────
+ app.tf:1-3
+────────────────────────────────────────
+   1 ┌ resource "aws_s3_bucket" "archive" {
+   2 │   bucket = "${var.name}-event-archive"
+   3 └ }
+────────────────────────────────────────
+
+
+AWS-0093 (HIGH): No public access block so not restricting public buckets
+════════════════════════════════════════
+S3 buckets should restrict public policies for the bucket. By enabling, the restrict_public_buckets, only the bucket owner and AWS Services can access if it has a public policy.
+
+
+See https://avd.aquasec.com/misconfig/aws-0093
+────────────────────────────────────────
+ app.tf:1-3
+────────────────────────────────────────
+   1 ┌ resource "aws_s3_bucket" "archive" {
+   2 │   bucket = "${var.name}-event-archive"
+   3 └ }
+────────────────────────────────────────
+
+
+AWS-0131 (HIGH): Root block device is not encrypted.
+════════════════════════════════════════
+Block devices should be encrypted to ensure sensitive data is held securely at rest.
+
+
+See https://avd.aquasec.com/misconfig/aws-0131
+────────────────────────────────────────
+ app.tf:16-23
+────────────────────────────────────────
+  16 ┌ resource "aws_instance" "bastion" {
+  17 │   ami                         = "ami-0c55b159cbfafe1f0"
+  18 │   instance_type               = "t3.micro"
+  19 │   subnet_id                   = aws_subnet.public_a.id
+  20 │   key_name                    = var.ssh_key_name
+  21 │   vpc_security_group_ids      = [aws_security_group.bastion.id]
+  22 │   associate_public_ip_address = true
+  23 └ }
+────────────────────────────────────────
+
+
+AWS-0132 (HIGH): Bucket does not encrypt data with a customer managed key.
+════════════════════════════════════════
+Encryption using AWS keys provides protection for your S3 buckets. To gain greater control over encryption, such as key rotation, access policies, and auditability, use customer managed keys (CMKs) with SSE-KMS.
+Note that SSE-KMS is not supported for S3 server access logging destination buckets; in such cases, use SSE-S3 instead.
+
+
+See https://avd.aquasec.com/misconfig/aws-0132
+────────────────────────────────────────
+ app.tf:1-3
+────────────────────────────────────────
+   1 ┌ resource "aws_s3_bucket" "archive" {
+   2 │   bucket = "${var.name}-event-archive"
+   3 └ }
+────────────────────────────────────────
+
+
+
+eks.tf (terraform)
+==================
+Tests: 5 (SUCCESSES: 0, FAILURES: 5)
+Failures: 5 (HIGH: 3, CRITICAL: 2)
+
+AWS-0039 (HIGH): Cluster does not have secret encryption enabled.
+════════════════════════════════════════
+EKS cluster resources should have the encryption_config block set with protection of the secrets resource.
+
+
+See https://avd.aquasec.com/misconfig/aws-0039
+────────────────────────────────────────
+ eks.tf:22-33
+────────────────────────────────────────
+  22 ┌ resource "aws_eks_cluster" "this" {
+  23 │   name     = var.name
+  24 │   role_arn = aws_iam_role.cluster.arn
+  25 │ 
+  26 │   vpc_config {
+  27 │     subnet_ids             = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+  28 │     endpoint_public_access = true
+  29 │     public_access_cidrs    = ["0.0.0.0/0"]
+  30 └   }
+  ..   
+────────────────────────────────────────
+
+
+AWS-0040 (CRITICAL): Public cluster access is enabled.
+════════════════════════════════════════
+EKS clusters are available publicly by default, this should be explicitly disabled in the vpc_config of the EKS cluster resource.
+
+
+See https://avd.aquasec.com/misconfig/aws-0040
+────────────────────────────────────────
+ eks.tf:28
+   via eks.tf:26-30 (vpc_config)
+    via eks.tf:22-33 (aws_eks_cluster.this)
+────────────────────────────────────────
+  22   resource "aws_eks_cluster" "this" {
+  ..   
+  28 [     endpoint_public_access = true
+  ..   
+  33   }
+────────────────────────────────────────
+
+
+AWS-0041 (CRITICAL): Cluster allows access from a public CIDR: 0.0.0.0/0
+════════════════════════════════════════
+EKS Clusters have public access cidrs set to 0.0.0.0/0 by default which is wide open to the internet. This should be explicitly set to a more specific private CIDR range
+
+
+See https://avd.aquasec.com/misconfig/aws-0041
+────────────────────────────────────────
+ eks.tf:29
+   via eks.tf:26-30 (vpc_config)
+    via eks.tf:22-33 (aws_eks_cluster.this)
+────────────────────────────────────────
+  22   resource "aws_eks_cluster" "this" {
+  ..   
+  29 [     public_access_cidrs    = ["0.0.0.0/0"]
+  ..   
+  33   }
+────────────────────────────────────────
+
+
+AWS-0130 (HIGH): Launch template does not require IMDS access to require a token
+════════════════════════════════════════
+IMDS v2 (Instance Metadata Service) introduced session authentication tokens which improve security when talking to IMDS.
+
+By default <code>aws_instance</code> resource sets IMDS session auth tokens to be optional.
+
+To fully protect IMDS you need to enable session tokens by using <code>metadata_options</code> block and its <code>http_tokens</code> variable set to <code>required</code>.
+
+
+See https://avd.aquasec.com/misconfig/aws-0130
+────────────────────────────────────────
+ eks.tf:93
+   via eks.tf:91-95 (metadata_options)
+    via eks.tf:82-106 (aws_launch_template.nodes)
+────────────────────────────────────────
+  82   resource "aws_launch_template" "nodes" {
+  ..   
+  93 [     http_tokens                 = "optional"
+ ...   
+ 106   }
+────────────────────────────────────────
+
+
+AWS-0345 (HIGH): IAM role uses a policy that allows 's3:*' action
+════════════════════════════════════════
+Ensure that the creation of the unrestricted S3 IAM policies is disallowed.
+
+See https://avd.aquasec.com/misconfig/aws-0345
+────────────────────────────────────────
+ eks.tf:69-74
+────────────────────────────────────────
+  69 ┌ data "aws_iam_policy_document" "node_app" {
+  70 │   statement {
+  71 │     actions   = ["s3:*", "secretsmanager:*"]
+  72 │     resources = ["*"]
+  73 │   }
+  74 └ }
+────────────────────────────────────────
+
+
+
+network.tf (terraform)
+======================
+Tests: 2 (SUCCESSES: 0, FAILURES: 2)
+Failures: 2 (HIGH: 2, CRITICAL: 0)
+
+AWS-0164 (HIGH): Subnet associates public IP address.
+════════════════════════════════════════
+You should limit the provision of public IP addresses for resources. Resources should not be exposed on the public internet, but should have access limited to consumers required for the function of your application.
+
+
+See https://avd.aquasec.com/misconfig/aws-0164
+────────────────────────────────────────
+ network.tf:15
+   via network.tf:11-16 (aws_subnet.public_a)
+────────────────────────────────────────
+  11   resource "aws_subnet" "public_a" {
+  12     vpc_id                  = aws_vpc.this.id
+  13     cidr_block              = "10.20.0.0/20"
+  14     availability_zone       = "${var.region}a"
+  15 [   map_public_ip_on_launch = true
+  16   }
+────────────────────────────────────────
+
+
+AWS-0164 (HIGH): Subnet associates public IP address.
+════════════════════════════════════════
+You should limit the provision of public IP addresses for resources. Resources should not be exposed on the public internet, but should have access limited to consumers required for the function of your application.
+
+
+See https://avd.aquasec.com/misconfig/aws-0164
+────────────────────────────────────────
+ network.tf:22
+   via network.tf:18-23 (aws_subnet.public_b)
+────────────────────────────────────────
+  18   resource "aws_subnet" "public_b" {
+  19     vpc_id                  = aws_vpc.this.id
+  20     cidr_block              = "10.20.16.0/20"
+  21     availability_zone       = "${var.region}b"
+  22 [   map_public_ip_on_launch = true
+  23   }
+────────────────────────────────────────
+
+
+
+security.tf (terraform)
+=======================
+Tests: 5 (SUCCESSES: 0, FAILURES: 5)
+Failures: 5 (HIGH: 2, CRITICAL: 3)
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:17
+   via security.tf:13-18 (egress)
+    via security.tf:1-19 (aws_security_group.alb)
+────────────────────────────────────────
+   1   resource "aws_security_group" "alb" {
+   .   
+  17 [     cidr_blocks = ["0.0.0.0/0"]
+  ..   
+  19   }
+────────────────────────────────────────
+
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:37
+   via security.tf:33-38 (egress)
+    via security.tf:21-39 (aws_security_group.bastion)
+────────────────────────────────────────
+  21   resource "aws_security_group" "bastion" {
+  ..   
+  37 [     cidr_blocks = ["0.0.0.0/0"]
+  ..   
+  39   }
+────────────────────────────────────────
+
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:81
+   via security.tf:77-82 (egress)
+    via security.tf:41-83 (aws_security_group.nodes)
+────────────────────────────────────────
+  41   resource "aws_security_group" "nodes" {
+  ..   
+  81 [     cidr_blocks = ["0.0.0.0/0"]
+  ..   
+  83   }
+────────────────────────────────────────
+
+
+AWS-0107 (HIGH): Security group rule allows unrestricted ingress from any IP address.
+════════════════════════════════════════
+Security groups provide stateful filtering of ingress and egress network traffic to AWS
+resources. It is recommended that no security group allows unrestricted ingress access to
+remote server administration ports, such as SSH to port 22 and RDP to port 3389.
+
+
+See https://avd.aquasec.com/misconfig/aws-0107
+────────────────────────────────────────
+ security.tf:30
+   via security.tf:25-31 (ingress)
+    via security.tf:21-39 (aws_security_group.bastion)
+────────────────────────────────────────
+  21   resource "aws_security_group" "bastion" {
+  ..   
+  30 [     cidr_blocks = ["0.0.0.0/0"]
+  ..   
+  39   }
+────────────────────────────────────────
+
+
+AWS-0107 (HIGH): Security group rule allows unrestricted ingress from any IP address.
+════════════════════════════════════════
+Security groups provide stateful filtering of ingress and egress network traffic to AWS
+resources. It is recommended that no security group allows unrestricted ingress access to
+remote server administration ports, such as SSH to port 22 and RDP to port 3389.
+
+
+See https://avd.aquasec.com/misconfig/aws-0107
+────────────────────────────────────────
+ security.tf:66
+   via security.tf:61-67 (ingress)
+    via security.tf:41-83 (aws_security_group.nodes)
+────────────────────────────────────────
+  41   resource "aws_security_group" "nodes" {
+  ..   
+  66 [     cidr_blocks = ["0.0.0.0/0"]
+  ..   
+  83   }
+────────────────────────────────────────
+
+
