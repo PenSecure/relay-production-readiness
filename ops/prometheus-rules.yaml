@@ -1,0 +1,107 @@
+# Alerts for relay. Requires the Prometheus Operator (PrometheusRule CRD),
+# so this lives outside k8s/ and is applied by the platform's monitoring stack.
+# SLOs and response steps: ops/RUNBOOK.md
+#
+# SLO 1, availability: 99.9% of POST /events return non-5xx over 30 days.
+#        (409 is a correct answer to a replay, so it counts as good.)
+# SLO 2, latency: 99% of POST /events complete in < 250ms.
+# SLO 3, archive freshness: events reach S3 within 5 minutes.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: relay
+  namespace: relay
+spec:
+  groups:
+    - name: relay-slo-recording
+      interval: 30s
+      rules:
+        - record: relay:events_error_ratio:rate5m
+          expr: |
+            sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST",status=~"5.."}[5m]))
+            / sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST"}[5m]))
+        - record: relay:events_error_ratio:rate30m
+          expr: |
+            sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST",status=~"5.."}[30m]))
+            / sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST"}[30m]))
+        - record: relay:events_error_ratio:rate1h
+          expr: |
+            sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST",status=~"5.."}[1h]))
+            / sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST"}[1h]))
+        - record: relay:events_error_ratio:rate6h
+          expr: |
+            sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST",status=~"5.."}[6h]))
+            / sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST"}[6h]))
+        - record: relay:events_slow_ratio:rate5m
+          expr: |
+            1 - (
+              sum(rate(relay_http_request_duration_seconds_bucket{route="/events",method="POST",le="0.25"}[5m]))
+              / sum(rate(relay_http_request_duration_seconds_count{route="/events",method="POST"}[5m]))
+            )
+
+    - name: relay-alerts
+      rules:
+        # Multi-window, multi-burn-rate (Google SRE workbook). 0.1% budget.
+        - alert: RelayErrorBudgetFastBurn
+          expr: relay:events_error_ratio:rate1h > (14.4 * 0.001) and relay:events_error_ratio:rate5m > (14.4 * 0.001)
+          for: 2m
+          labels: { severity: page }
+          annotations:
+            summary: "relay is burning its 30-day error budget ~14x too fast (2% of budget per hour)"
+            runbook: ops/RUNBOOK.md#5xx-errors
+        - alert: RelayErrorBudgetSlowBurn
+          expr: relay:events_error_ratio:rate6h > (6 * 0.001) and relay:events_error_ratio:rate30m > (6 * 0.001)
+          for: 15m
+          labels: { severity: ticket }
+          annotations:
+            summary: "relay error rate is consuming budget ~6x too fast"
+            runbook: ops/RUNBOOK.md#5xx-errors
+
+        - alert: RelayLatencySLO
+          expr: relay:events_slow_ratio:rate5m > 0.01
+          for: 10m
+          labels: { severity: page }
+          annotations:
+            summary: "More than 1% of POST /events slower than 250ms"
+            runbook: ops/RUNBOOK.md#latency
+
+        - alert: RelayArchiveLagging
+          expr: max(relay_archive_oldest_pending_seconds) > 300
+          for: 10m
+          labels: { severity: page }
+          annotations:
+            summary: "Events are not reaching S3 (oldest pending {{ $value | humanizeDuration }})"
+            runbook: ops/RUNBOOK.md#archive-lag
+
+        - alert: RelayDbPoolSaturated
+          expr: sum(relay_db_pool_connections{state="waiting"}) > 0
+          for: 5m
+          labels: { severity: ticket }
+          annotations:
+            summary: "Requests are queueing for a database connection"
+            runbook: ops/RUNBOOK.md#db-pool--connection-budget
+
+        - alert: RelayAtMaxReplicas
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="relay",horizontalpodautoscaler="relay"}
+              >= kube_horizontalpodautoscaler_spec_max_replicas{namespace="relay",horizontalpodautoscaler="relay"}
+          for: 15m
+          labels: { severity: ticket }
+          annotations:
+            summary: "relay is pinned at maxReplicas, which is capped by the DB connection budget"
+            runbook: ops/RUNBOOK.md#db-pool--connection-budget
+
+        - alert: RelayPodsRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="relay",container="relay"}[15m]) > 2
+          labels: { severity: ticket }
+          annotations:
+            summary: "relay containers are restarting (OOM or crash)"
+            runbook: ops/RUNBOOK.md#restarts
+
+        - alert: RelayNoReadyPods
+          expr: sum(kube_deployment_status_replicas_available{namespace="relay",deployment="relay"}) < 2
+          for: 2m
+          labels: { severity: page }
+          annotations:
+            summary: "Fewer than 2 relay pods available"
+            runbook: ops/RUNBOOK.md#5xx-errors
