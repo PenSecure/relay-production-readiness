@@ -1,0 +1,200 @@
+name: ci
+
+# Every push and PR: test, validate, scan, build.
+# A v* tag is a release: the scanned image is pushed to ECR and deployed by
+# digest through the "production" environment (configure required reviewers
+# in repo settings). The old
+# pipeline deployed :latest from every push to main, with long-lived keys,
+# and applied the local Postgres + dev secret to production.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  AWS_REGION: eu-west-1
+  ECR_REPO: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/relay
+  EKS_CLUSTER: relay-prod
+  # Third-party tools pinned by digest (Dependabot updates them).
+  TRIVY_IMAGE: aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c
+  KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s
+          --health-timeout 5s --health-retries 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci --no-fund
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres
+
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.3
+      - name: Terraform fmt + validate
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+      - name: Kubernetes manifests (local + prod overlays)
+        run: |
+          for overlay in k8s k8s/prod; do
+            echo "== $overlay"
+            kubectl kustomize "$overlay" | docker run --rm -i "$KUBECONFORM_IMAGE" \
+              -strict -summary -ignore-missing-schemas -kubernetes-version 1.33.0 -
+          done
+      - name: Guard - prod overlay must not ship local-only resources
+        run: |
+          out=$(kubectl kustomize k8s/prod)
+          if grep -qE '^kind: Secret$|name: postgres$' <<<"$out"; then
+            echo "::error::k8s/prod renders a Secret or the local Postgres"; exit 1
+          fi
+      - name: IaC + manifest misconfiguration scan
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$TRIVY_IMAGE" config \
+            --severity HIGH,CRITICAL --exit-code 1 --ignorefile .trivyignore terraform/
+          mkdir -p /tmp/render && kubectl kustomize k8s/prod > /tmp/render/prod.yaml
+          docker run --rm -v /tmp/render:/src "$TRIVY_IMAGE" config \
+            --severity HIGH,CRITICAL --exit-code 1 /src
+      - name: Secret scan (working tree)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$TRIVY_IMAGE" fs \
+            --scanners secret --exit-code 1 .
+
+  image:
+    needs: [test, validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # OIDC to AWS, only used when publishing
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    env:
+      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build (local, for scanning)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          load: true
+          tags: relay:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Image vulnerability + secret scan
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            relay:${{ github.sha }}
+
+      - if: env.PUBLISH == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }} # terraform output ci_role_arn
+          aws-region: ${{ env.AWS_REGION }}
+      - if: env.PUBLISH == 'true'
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+      - name: Push (immutable tag, SBOM + provenance)
+        id: push
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          push: true
+          tags: ${{ env.ECR_REPO }}:${{ github.sha }}
+          cache-from: type=gha
+          sbom: true
+          provenance: mode=max
+
+  deploy:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production # required reviewers gate
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Render release (prod overlay pinned to the scanned digest)
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          test -n "$DIGEST" || { echo "::error::no image digest"; exit 1; }
+          mkdir -p k8s/release
+          cat > k8s/release/kustomization.yaml <<YAML
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources: [../prod]
+          images:
+            - name: ${ECR_REPO}
+              digest: ${DIGEST}
+          YAML
+          kubectl kustomize k8s/release | grep -E 'image:'
+      # The EKS API is private (terraform). This job needs a runner with VPC
+      # access, or var.cluster_admin_cidrs set to the runner's egress range.
+      - name: Apply and wait; roll back automatically on failure
+        run: |
+          aws eks update-kubeconfig --name "$EKS_CLUSTER"
+          kubectl apply -k k8s/release
+          if ! kubectl -n relay rollout status deploy/relay --timeout=5m; then
+            echo "::error::rollout failed, rolling back"
+            kubectl -n relay rollout undo deploy/relay
+            kubectl -n relay rollout status deploy/relay --timeout=5m
+            exit 1
+          fi
