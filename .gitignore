@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+*.log
+
+# Local env files hold real credentials. Never commit them.
+.env
+.env.*
+!.env.example
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
