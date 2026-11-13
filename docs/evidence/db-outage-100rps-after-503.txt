@@ -1,0 +1,12 @@
+load: 100 req/s for 45s -> http://localhost:8080/events (payload ~8192B, replay 0.05)
+[   5s] sent=496 status[201:482 409:14] errors[-] p50=5ms p95=13ms p99=90ms
+[  10s] sent=499 status[201:472 409:27] errors[-] p50=5ms p95=9ms p99=19ms
+[  15s] sent=504 status[201:480 409:24] errors[-] p50=5ms p95=10ms p99=17ms
+[  20s] sent=500 status[201:5 503:291] errors[-] p50=2006ms p95=2012ms p99=2015ms
+[  25s] sent=499 status[503:504] errors[-] p50=2004ms p95=2006ms p99=2011ms
+[  30s] sent=498 status[201:388 409:25 503:284] errors[-] p50=1386ms p95=2006ms p99=2009ms
+[  35s] sent=504 status[201:473 409:26] errors[-] p50=6ms p95=12ms p99=59ms
+[  40s] sent=499 status[201:478 409:26] errors[-] p50=6ms p95=10ms p99=13ms
+[  45s] sent=499 status[201:477 409:22] errors[-] p50=6ms p95=9ms p99=42ms
+
+total: sent=4498 status[201:3255 409:164 503:1079] errors[-] p50=6ms p95=2006ms p99=2009ms

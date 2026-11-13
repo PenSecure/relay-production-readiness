@@ -9,6 +9,17 @@ const IDEMPOTENCY_KEY = /^[\x21-\x7e]{1,255}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const { log } = require('./log');
 
+// Database unreachable / restarting / overloaded. These are transient, so
+// answer 503 + Retry-After: the client retries with the same
+// Idempotency-Key, which is safe by design.
+function isTransientDbError(err) {
+  return (
+    ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN'].includes(err.code) ||
+    /^08|^57P0[1-3]$|^53300$/.test(err.code || '') || // connection exception, admin shutdown, too_many_connections
+    /timeout exceeded when trying to connect|Connection terminated|Query read timeout/i.test(err.message || '')
+  );
+}
+
 /**
  * Build the HTTP app. Dependencies are injected so tests can run it against a
  * real database without starting a server or touching process signals.
@@ -144,6 +155,10 @@ function createApp({ pool, signingSecret, bodyLimit = '32kb', metrics, isShuttin
   app.use((err, req, res, next) => {
     if (err.type === 'entity.too.large') return res.status(413).json({ error: 'payload too large' });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'malformed JSON' });
+    if (isTransientDbError(err)) {
+      log('warn', 'database unavailable', { route: req.route?.path, err: err.message, code: err.code });
+      return res.status(503).set('Retry-After', '1').json({ error: 'temporarily unavailable, retry' });
+    }
     log('error', 'unhandled request error', { route: req.route?.path, err: err.message, code: err.code });
     res.status(500).json({ error: 'internal error' });
   });

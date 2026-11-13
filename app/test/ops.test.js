@@ -25,6 +25,21 @@ test('liveness does not depend on the database; readiness does, without leaking 
   }
 });
 
+test('database outage returns 503 + Retry-After (retryable), not 500', async () => {
+  const down = {
+    query: async () => { throw Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' }); },
+  };
+  const inst = await startInstance({ pool: down });
+  try {
+    const res = await inst.post({ x: 1 }, { 'Idempotency-Key': crypto.randomUUID() });
+    assert.equal(res.status, 503);
+    assert.equal(res.headers.get('retry-after'), '1');
+    assert.ok(!(await res.text()).includes('10.0.0.5'));
+  } finally {
+    await inst.close();
+  }
+});
+
 test('readiness fails while shutting down so traffic drains first', async () => {
   let draining = false;
   const inst = await startInstance({ isShuttingDown: () => draining });

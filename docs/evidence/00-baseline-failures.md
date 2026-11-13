@@ -83,3 +83,18 @@ run 2 (150s) total: sent=22499 status[201:21411 409:730 500:322] errors[ECONNRES
 - **Both replicas landed in zone `local-a`.** The spread constraint is only
   checked at scheduling time and counted the outgoing ReplicaSet's pods during
   the rollout.
+
+---
+
+# After the fixes
+
+| Test | Result |
+|---|---|
+| `make up` on a fresh kind cluster | works, 3 pods across both zones, HPA reading CPU |
+| 400 req/s x 300s, 5% replays (`load-400rps.txt`) | `total: sent=119980 status[201:113998 409:5982] errors[-] p50=7ms p95=12ms p99=31ms`; 0 restarts; ~34MB/pod flat; ~42% CPU of request on 3 pods (`load-400rps-cluster.txt`) |
+| Rolling restart of all pods at 400 req/s (`rollout-under-load-*.txt`) | `total: sent=47991 status[201:45655 409:2336] errors[-]`: zero failed requests |
+| Postgres killed under 100 req/s, ~1s outage (`db-outage-*.txt`) | 76 fast failures in one 5s window, 0 relay restarts, automatic recovery |
+| Same, ~12s outage, after the 503 change (`db-outage-100rps-after-503.txt`) | `status[201:3255 409:164 503:1079]`: retryable 503 + Retry-After, bounded at ~2s; 0 relay restarts; recovered in one window. The original DB-backed liveness probe (2 x 5s) would have restarted every pod |
+| NetworkPolicy (ephemeral debug container) | postgres:5432 open, 1.1.1.1:80 blocked: enforced by kindnet |
+| Image scan, HIGH/CRITICAL | original 717 (1.66GB, root) -> 0 (257MB, uid 65532) |
+| Terraform scan, HIGH/CRITICAL | 22 -> 3, all accepted with reasons in `.trivyignore` |

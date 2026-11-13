@@ -1,0 +1,9 @@
+[t=15s] stopping postgres (SIGINT to PID 1)
+[t=19s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=23s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=27s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=31s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=35s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=39s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=43s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
+[t=47s] ready relay pods: true true true  | relay restarts: 0 0 0  | pg restarts: 1
