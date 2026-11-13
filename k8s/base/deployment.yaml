@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay
+  labels:
+    app: relay
+spec:
+  # No `replicas:` here on purpose. The HPA owns the replica count. Setting it
+  # in the manifest would reset the HPA's choice on every `kubectl apply`.
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # never drop below current capacity during a deploy
+      maxSurge: 1       # part of the DB connection budget, see configmap
+  selector:
+    matchLabels:
+      app: relay
+  template:
+    metadata:
+      labels:
+        app: relay
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: relay
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      topologySpreadConstraints:
+        # Spread across zones, then nodes. ScheduleAnyway rather than
+        # DoNotSchedule: if a zone is lost we want replacement pods to land in
+        # the surviving zone, not stay Pending. matchLabelKeys scopes the count
+        # to this ReplicaSet. Without it, old pods are counted during a
+        # rollout (that is how both baseline pods ended up in local-a).
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: relay
+          matchLabelKeys: [pod-template-hash]
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: relay
+          matchLabelKeys: [pod-template-hash]
+
+      initContainers:
+        # Runs before the app container. A Postgres advisory lock serialises
+        # concurrent pods. Once the schema is current this is a few-ms no-op.
+        - name: migrate
+          image: relay
+          imagePullPolicy: IfNotPresent
+          args: ["src/migrate.js"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: DATABASE_URL
+            - name: SIGNING_SECRET # config loader requires it; unused by migrate
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: SIGNING_SECRET
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext: &containerSecurity
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+
+      containers:
+        - name: relay
+          image: relay
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: relay-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: DATABASE_URL
+            - name: SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: SIGNING_SECRET
+
+          # startup: generous, so a slow boot is not killed.
+          # liveness: process only, never the DB. A DB blip must not restart
+          #           every pod at once.
+          # readiness: includes the DB, so traffic goes only to pods that can
+          #            serve it. Also fails during graceful shutdown.
+          startupProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # CPU: request only. The HPA scales on it, and a CPU limit would only
+          # add CFS throttling to tail latency. Memory: limit set, with the V8
+          # heap capped below it (NODE_OPTIONS in the configmap).
+          resources:
+            requests:
+              cpu: 250m
+              memory: 192Mi
+            limits:
+              memory: 256Mi
+          securityContext: *containerSecurity

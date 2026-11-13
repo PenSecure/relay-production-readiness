@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: relay
+  labels:
+    # Base warns/audits on anything below "restricted". The prod overlay
+    # enforces it. Local cannot, because the stand-in postgres runs as root.
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

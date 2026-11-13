@@ -1,0 +1,17 @@
+# LOCAL (kind) environment: `kubectl apply -k k8s/`
+#
+# Adds the local-only pieces on top of base: the stand-in Postgres and a dev
+# secret. Production uses k8s/prod, which never includes either of them.
+# (The original CI ran `kubectl apply -f k8s/`, which would have overwritten
+# the production secret with these dev values and started this Postgres in prod.)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: relay
+resources:
+  - base
+  - postgres.yaml
+  - secret.yaml
+images:
+  - name: relay
+    newName: relay
+    newTag: local

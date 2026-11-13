@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: relay-config
+data:
+  # The platform network policy only allows 8080 in every environment.
+  PORT: "8080"
+
+  # Connection budget. The managed database allows max_connections=100 and
+  # will not change this quarter. Worst case is every replica at full pool
+  # during a rollout surge, plus one migrator:
+  #   (HPA maxReplicas 8 + maxSurge 1) x PG_POOL_MAX 8 + 1 = 73
+  # That leaves ~27 for the data team, superuser_reserved_connections and
+  # break-glass access. Change any of these three numbers together.
+  PG_POOL_MAX: "8"
+  PG_STATEMENT_TIMEOUT_MS: "5000"
+
+  # SHUTDOWN_DELAY_MS + SHUTDOWN_TIMEOUT_MS < terminationGracePeriodSeconds (45s)
+  SHUTDOWN_DELAY_MS: "10000"
+  SHUTDOWN_TIMEOUT_MS: "20000"
+
+  # Keep V8's heap under the container memory limit (256Mi) so GC runs
+  # before the kernel OOM-kills the process. The original 512MB heap sat
+  # above the 256Mi limit, which is why staging saw OOMKills.
+  NODE_OPTIONS: "--max-old-space-size=160"

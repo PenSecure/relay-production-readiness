@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: relay
+spec:
+  # Node drains and cluster upgrades evict at most one pod at a time.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: relay

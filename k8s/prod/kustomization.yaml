@@ -1,0 +1,38 @@
+# PRODUCTION: rendered and applied by .github/workflows/ci.yml.
+# CI pins the image with `kustomize edit set image relay=<ecr>@<digest>`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: relay
+resources:
+  - ../base
+  - externalsecret.yaml
+images:
+  - name: relay
+    newName: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/relay
+    newTag: set-by-ci
+patches:
+  - target: { kind: Namespace, name: relay }
+    patch: |-
+      - op: add
+        path: /metadata/labels/pod-security.kubernetes.io~1enforce
+        value: restricted
+  - target: { kind: ServiceAccount, name: relay }
+    patch: |-
+      # IRSA: pods get a role scoped to this app's bucket and secrets,
+      # instead of the node role (terraform/iam_app.tf).
+      - op: add
+        path: /metadata/annotations
+        value:
+          eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/relay-prod-app
+  - target: { kind: Deployment, name: relay }
+    patch: |-
+      # IRSA projects a web identity token into the pod. That uses a
+      # dedicated projected volume, not the Kubernetes API token.
+      - op: replace
+        path: /spec/template/spec/automountServiceAccountToken
+        value: true
+  - target: { kind: ConfigMap, name: relay-config }
+    patch: |-
+      - op: add
+        path: /data/ARCHIVE_BUCKET
+        value: relay-prod-event-archive
