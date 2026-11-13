@@ -4,7 +4,7 @@
 variable "github_repository" {
   description = "owner/repo allowed to assume the CI role"
   type        = string
-  default     = "example-org/relay"
+  default     = "PenSecure/relay-production-readiness"
 }
 
 data "aws_iam_openid_connect_provider" "github" {
