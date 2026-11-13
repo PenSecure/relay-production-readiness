@@ -1,0 +1,33 @@
+load: 150 req/s for 150s -> http://localhost:8080/events (payload ~8192B, replay 0.05)
+[   5s] sent=749 status[201:705 409:23 500:14] errors[-] p50=6ms p95=11ms p99=30ms
+[  10s] sent=750 status[201:703 409:24 500:22] errors[-] p50=6ms p95=13ms p99=28ms
+[  15s] sent=750 status[201:724 409:20 500:7] errors[-] p50=6ms p95=10ms p99=17ms
+[  20s] sent=749 status[201:723 409:20 500:13] errors[-] p50=6ms p95=12ms p99=14ms
+[  25s] sent=750 status[201:710 409:23 500:17] errors[-] p50=5ms p95=10ms p99=14ms
+[  30s] sent=747 status[201:716 409:21 500:10] errors[-] p50=6ms p95=10ms p99=24ms
+[  35s] sent=748 status[201:709 409:23 500:16] errors[-] p50=6ms p95=11ms p99=21ms
+[  40s] sent=755 status[201:720 409:19 500:16] errors[-] p50=5ms p95=10ms p99=21ms
+[  45s] sent=749 status[201:713 409:9 500:13] errors[ECONNRESET:14] p50=5ms p95=12ms p99=18ms
+[  50s] sent=747 status[201:710 409:19 500:18] errors[-] p50=6ms p95=12ms p99=31ms
+[  55s] sent=755 status[201:721 409:26 500:8] errors[-] p50=6ms p95=12ms p99=17ms
+[  60s] sent=747 status[201:708 409:39] errors[-] p50=6ms p95=11ms p99=18ms
+[  65s] sent=748 status[201:714 409:34] errors[-] p50=6ms p95=12ms p99=75ms
+[  70s] sent=756 status[201:698 409:42 500:8] errors[-] p50=6ms p95=10ms p99=17ms
+[  75s] sent=750 status[201:715 409:31 500:4] errors[-] p50=6ms p95=9ms p99=29ms
+[  80s] sent=747 status[201:717 409:28 500:9] errors[-] p50=6ms p95=12ms p99=16ms
+[  85s] sent=748 status[201:692 409:22 500:13] errors[ECONNRESET:22] p50=6ms p95=11ms p99=23ms
+[  90s] sent=749 status[201:713 409:16 500:20] errors[-] p50=6ms p95=12ms p99=16ms
+[  95s] sent=755 status[201:723 409:16 500:16] errors[-] p50=6ms p95=12ms p99=18ms
+[ 100s] sent=748 status[201:722 409:23 500:3] errors[-] p50=6ms p95=13ms p99=32ms
+[ 105s] sent=748 status[201:710 409:30 500:8] errors[-] p50=5ms p95=9ms p99=14ms
+[ 110s] sent=756 status[201:720 409:25 500:4] errors[-] p50=5ms p95=9ms p99=12ms
+[ 115s] sent=749 status[201:728 409:22 500:6] errors[-] p50=5ms p95=13ms p99=19ms
+[ 120s] sent=747 status[201:702 409:35 500:10] errors[-] p50=5ms p95=11ms p99=14ms
+[ 125s] sent=747 status[201:716 409:21 500:10] errors[-] p50=6ms p95=11ms p99=20ms
+[ 130s] sent=756 status[201:722 409:26 500:8] errors[-] p50=6ms p95=9ms p99=13ms
+[ 135s] sent=748 status[201:715 409:25 500:8] errors[-] p50=5ms p95=13ms p99=22ms
+[ 140s] sent=748 status[201:715 409:24 500:9] errors[-] p50=5ms p95=12ms p99=30ms
+[ 145s] sent=756 status[201:714 409:23 500:11] errors[-] p50=6ms p95=13ms p99=18ms
+[ 150s] sent=747 status[201:713 409:21 500:21] errors[-] p50=5ms p95=11ms p99=18ms
+
+total: sent=22499 status[201:21411 409:730 500:322] errors[ECONNRESET:36] p50=6ms p95=11ms p99=18ms

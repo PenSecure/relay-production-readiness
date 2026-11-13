@@ -1,0 +1,2 @@
+relay-f848bd655-hrg7k restarts=1 last=OOMKilled exit=137
+relay-f848bd655-wmgws restarts=1 last=OOMKilled exit=137
