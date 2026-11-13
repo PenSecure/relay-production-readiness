@@ -1,13 +1,21 @@
 version: 2
+# Majors are deliberate upgrades, not weekly bumps. Node stays on the 22 LTS
+# line and Express 5 has breaking changes, so both need planned work.
 updates:
   - package-ecosystem: npm
     directory: /app
     schedule: { interval: weekly }
     groups:
       aws-sdk: { patterns: ["@aws-sdk/*"] }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /app
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
