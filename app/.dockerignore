@@ -1,0 +1,5 @@
+# Build context allow-list: only what the image needs.
+*
+!package.json
+!package-lock.json
+!src/

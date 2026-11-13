@@ -1,133 +1,81 @@
 'use strict';
 
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
-const express = require('express');
+const config = require('./config').load();
+const { createPool } = require('./db');
+const { createApp } = require('./app');
+const { log } = require('./log');
+const { createMetrics } = require('./metrics');
+const { createArchiver, s3Put } = require('./archiver');
 
-const config = require('./config');
-const { pool } = require('./db');
+const pool = createPool(config);
+const metrics = createMetrics({ pool });
 
-// ---------------------------------------------------------------- logging
-
-let accessLog = process.stdout;
-if (config.logFile) {
-  fs.mkdirSync(path.dirname(config.logFile), { recursive: true });
-  accessLog = fs.createWriteStream(config.logFile, { flags: 'a' });
-}
-
-function logRequest(req, res, startedAt) {
-  accessLog.write(
-    JSON.stringify({
-      ts: new Date().toISOString(),
-      method: req.method,
-      path: req.path,
-      status: res.statusCode,
-      ms: Date.now() - startedAt,
-      key: req.get('Idempotency-Key') || null,
-    }) + '\n',
-  );
-}
-
-// ------------------------------------------------------------ idempotency
-
-// Clients retry with the same Idempotency-Key. Replays are answered from
-// memory so a retry storm never reaches the database.
-const seen = new Map();
-
-function remember(key, entry) {
-  seen.set(key, entry);
-  if (config.dedupeMaxEntries > 0 && seen.size > config.dedupeMaxEntries) {
-    seen.delete(seen.keys().next().value);
-  }
-}
-
-// ---------------------------------------------------------------- archive
-
-let s3 = null;
-
-async function archive(id, payload) {
-  if (!config.archiveBucket) return;
-  const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-  // No explicit credentials: the SDK picks them up from the environment.
-  if (!s3) s3 = new S3Client({});
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: config.archiveBucket,
-      Key: `events/${id}.json`,
-      Body: JSON.stringify(payload),
-      ContentType: 'application/json',
-    }),
-  );
-}
-
-// -------------------------------------------------------------------- app
-
-const app = express();
-app.disable('x-powered-by');
-app.use(express.json({ limit: '64kb' }));
-
-app.use((req, res, next) => {
-  const startedAt = Date.now();
-  res.on('finish', () => logRequest(req, res, startedAt));
-  next();
+let shuttingDown = false;
+const app = createApp({
+  pool,
+  signingSecret: config.signingSecret,
+  bodyLimit: config.bodyLimit,
+  metrics,
+  isShuttingDown: () => shuttingDown,
 });
 
-app.get('/health', async (req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ status: 'ok' });
-  } catch (err) {
-    res.status(503).json({ status: 'unavailable', error: err.message });
-  }
+const server = app.listen(config.port, () => {
+  log('info', 'relay listening', { port: config.port, pool_max: config.poolMax, archive: Boolean(config.archiveBucket) });
 });
 
-app.post('/events', async (req, res) => {
-  const key = req.get('Idempotency-Key');
-  if (!key) {
-    return res.status(400).json({ error: 'Idempotency-Key header is required' });
-  }
+// The ALB idle timeout defaults to 60s. Node's keep-alive timeout must be
+// longer, otherwise Node can close a socket just as the ALB reuses it, which
+// shows up as sporadic 502s.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+server.requestTimeout = 30_000;
 
-  const previous = seen.get(key);
-  if (previous) {
-    return res.status(409).json({ id: previous.id, duplicate: true });
-  }
+const archiver = config.archiveBucket
+  ? createArchiver({
+      pool,
+      bucket: config.archiveBucket,
+      intervalMs: config.archiveIntervalMs,
+      batchSize: config.archiveBatchSize,
+      metrics,
+      put: s3Put(),
+    })
+  : null;
+archiver?.start();
 
-  const id = crypto.randomUUID();
-  const payload = req.body;
-  const signature = crypto
-    .createHmac('sha256', config.signingSecret)
-    .update(JSON.stringify(payload))
-    .digest('hex');
+// ----------------------------------------------------------- graceful stop
+//
+// Kubernetes removes a terminating pod from endpoints at the same time as it
+// sends SIGTERM, but kube-proxy and the ALB take a few seconds to notice. So:
+//   1. fail readiness and keep serving for SHUTDOWN_DELAY_MS;
+//   2. stop accepting connections and let in-flight requests finish;
+//   3. stop the archiver, close the pool, exit.
+// SHUTDOWN_DELAY_MS + SHUTDOWN_TIMEOUT_MS must be < terminationGracePeriodSeconds.
 
-  try {
-    await pool.query(
-      'INSERT INTO events (id, idempotency_key, payload, signature) VALUES ($1, $2, $3, $4)',
-      [id, key, payload, signature],
-    );
-    remember(key, { id, payload, signature });
-    await archive(id, payload);
-    res.status(201).json({ id, signature });
-  } catch (err) {
-    console.error('failed to store event:', err.message);
-    res.status(500).json({ error: 'internal error' });
-  }
-});
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log('info', 'shutdown started', { signal, delay_ms: config.shutdownDelayMs });
 
-app.get('/events/:id', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, idempotency_key, payload, signature, received_at FROM events WHERE id = $1',
-      [req.params.id],
-    );
-    if (rows.length === 0) return res.status(404).json({ error: 'not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error('failed to read event:', err.message);
-    res.status(500).json({ error: 'internal error' });
-  }
-});
+  const hardStop = setTimeout(() => {
+    log('error', 'shutdown timed out, exiting');
+    process.exit(1);
+  }, config.shutdownDelayMs + config.shutdownTimeoutMs);
+  hardStop.unref();
 
-app.listen(config.port, () => {
-  console.log(`relay listening on :${config.port} (pool max ${config.poolMax})`);
+  await new Promise((r) => setTimeout(r, config.shutdownDelayMs));
+  await new Promise((r) => {
+    server.close(r);
+    server.closeIdleConnections();
+  });
+  await archiver?.stop();
+  await pool.end();
+  log('info', 'shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('unhandledRejection', (err) => {
+  log('error', 'unhandled rejection', { err: err?.message ?? String(err) });
 });
