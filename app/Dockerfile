@@ -9,7 +9,7 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 # ---- runtime: distroless. No shell, no package manager, runs as UID 65532.
 # Debian 13 base: the Debian 12 variant carried unpatched libssl3 CVEs
 # (1 CRITICAL, 6 HIGH at time of writing). Pinned by digest; Dependabot bumps it.
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:39c66687298417dbf3ff2fb8b6012c20554494e16414ef7afd07b9abbb45b501
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:c73ddeb03e1dc2d579aa111c83d6699c6b8b487e35c0c631d4a3a20229fc25ee
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps --chown=65532:65532 /app/node_modules ./node_modules
